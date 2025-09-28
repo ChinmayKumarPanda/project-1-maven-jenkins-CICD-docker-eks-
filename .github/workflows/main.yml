@@ -62,7 +62,7 @@ jobs:
         shell: bash
 
       - name: Login to Docker Hub (only on push and when credentials available)
-        if: >
+        if: >-
           github.event_name == 'push' &&
           (
             secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != ''
@@ -72,12 +72,12 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: docker.io
-          # prefer secrets, fallback to vars via expression
+          # prefer secrets, fallback to vars via expression (quoted to avoid YAML parsing issues)
           username: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_USERNAME || vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN != '' && secrets.DOCKERHUB_TOKEN || vars.DOCKERHUB_TOKEN }}
 
       - name: Build and push image (only on push)
-        if: github.event_name == 'push'
+        if: "github.event_name == 'push'"
         uses: docker/build-push-action@v4
         with:
           context: .
@@ -85,7 +85,7 @@ jobs:
           tags: ${{ env.IMAGE_NAME }}
 
       - name: Deploy on remote server via SSH (only on push)
-        if: github.event_name == 'push'
+        if: "github.event_name == 'push'"
         uses: appleboy/ssh-action@v0.1.8
         with:
           host: ${{ secrets.SSH_HOST }}
