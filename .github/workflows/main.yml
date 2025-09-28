@@ -11,6 +11,7 @@ on:
 jobs:
   build-push-deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,26 +38,27 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
+          port: ${{ secrets.SSH_PORT || '22' }}
           timeout: 120
           script: |
             set -e
-            # login to docker hub on remote host (so private or rate-limited pulls succeed)
+
+            # (Optional) Docker login on remote host (in case of private image or rate limits)
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin || true
 
-            # pull latest image
+            # Pull latest image
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/mvntmct:latest
 
-            # stop & remove old container if present
+            # Stop & remove previous container if present
             if [ "$(docker ps -q -f name=myapp)" ]; then
               docker stop myapp || true
               docker rm myapp || true
             fi
 
-            # optionally remove old image (free space)
+            # Remove old image (optional)
             if docker images -q ${{ secrets.DOCKERHUB_USERNAME }}/mvntmct:latest > /dev/null 2>&1; then
               docker rmi ${{ secrets.DOCKERHUB_USERNAME }}/mvntmct:latest || true
             fi
 
-            # run the container (map host 8082 -> container 8080)
+            # Run the container (host 8082 -> container 8080)
             docker run -d --restart unless-stopped -p 8082:8080 --name myapp ${{ secrets.DOCKERHUB_USERNAME }}/mvntmct:latest
