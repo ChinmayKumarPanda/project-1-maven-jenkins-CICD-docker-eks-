@@ -19,20 +19,28 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Only attempt Docker login when we have secrets (and only for pushes)
       - name: Login to Docker Hub
+        if: >
+          github.event_name == 'push' &&
+          env.DOCKERHUB_USERNAME != '' &&
+          env.DOCKERHUB_TOKEN != ''
         uses: docker/login-action@v2
         with:
+          registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push image (only on push to main)
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/mvntmct:latest
 
-      - name: Deploy on remote server via SSH
+      - name: Deploy on remote server via SSH (only on push)
+        if: github.event_name == 'push'
         uses: appleboy/ssh-action@v0.1.8
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -43,22 +51,18 @@ jobs:
           script: |
             set -e
 
-            # (Optional) Docker login on remote host (in case of private image or rate limits)
+            # Login on remote host (optional)
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin || true
 
-            # Pull latest image
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/mvntmct:latest
 
-            # Stop & remove previous container if present
             if [ "$(docker ps -q -f name=myapp)" ]; then
               docker stop myapp || true
               docker rm myapp || true
             fi
 
-            # Remove old image (optional)
             if docker images -q ${{ secrets.DOCKERHUB_USERNAME }}/mvntmct:latest > /dev/null 2>&1; then
               docker rmi ${{ secrets.DOCKERHUB_USERNAME }}/mvntmct:latest || true
             fi
 
-            # Run the container (host 8082 -> container 8080)
             docker run -d --restart unless-stopped -p 8082:8080 --name myapp ${{ secrets.DOCKERHUB_USERNAME }}/mvntmct:latest
