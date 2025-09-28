@@ -8,109 +8,19 @@ on:
     branches:
       - main
 
-permissions:
-  contents: read
-  packages: write
-  id-token: write
-
 jobs:
-  build-push-deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    env:
-      REPO_IMAGE_NAME: mvntmct
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Debug: check where credentials exist (masked)
-        run: |
-          # Check secrets
-          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then echo "secret DOCKERHUB_USERNAME is set"; else echo "secret DOCKERHUB_USERNAME is NOT set"; fi
-          if [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then echo "secret DOCKERHUB_TOKEN is set"; else echo "secret DOCKERHUB_TOKEN is NOT set"; fi
-          # Check repo variables (vars.)
-          if [ -n "${{ vars.DOCKERHUB_USERNAME }}" ]; then echo "var DOCKERHUB_USERNAME is set"; else echo "var DOCKERHUB_USERNAME is NOT set"; fi
-          if [ -n "${{ vars.DOCKERHUB_TOKEN }}" ]; then echo "var DOCKERHUB_TOKEN is set"; else echo "var DOCKERHUB_TOKEN is NOT set"; fi
+      - name: Build Docker Image
+        run: docker build -t mvntmct .
 
-      - name: Compute IMAGE_NAME (safe fallback) and expose it
-        id: compute_image
-        run: |
-          # Prefer secrets, then repo variables (vars), then fallback
-          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
-            DH_USER="${{ secrets.DOCKERHUB_USERNAME }}"
-          elif [ -n "${{ vars.DOCKERHUB_USERNAME }}" ]; then
-            DH_USER="${{ vars.DOCKERHUB_USERNAME }}"
-          else
-            DH_USER=""
-          fi
-
-          if [ -n "$DH_USER" ]; then
-            IMAGE_NAME="${DH_USER}/${{ env.REPO_IMAGE_NAME }}:latest"
-          else
-            IMAGE_NAME="${GITHUB_REPOSITORY}:latest"
-          fi
-
-          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
-          echo "Computed IMAGE_NAME='$IMAGE_NAME'"
-
-      - name: Show final tag used (verify)
-        run: |
-          echo "Final tag to be used: $IMAGE_NAME"
-        shell: bash
-
-      - name: Login to Docker Hub (only on push and when credentials available)
-        if: >-
-          github.event_name == 'push' &&
-          (
-            secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != ''
-            ||
-            vars.DOCKERHUB_USERNAME != '' && vars.DOCKERHUB_TOKEN != ''
-          )
-        uses: docker/login-action@v2
-        with:
-          registry: docker.io
-          # prefer secrets, fallback to vars via expression (quoted to avoid YAML parsing issues)
-          username: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_USERNAME || vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN != '' && secrets.DOCKERHUB_TOKEN || vars.DOCKERHUB_TOKEN }}
-
-      - name: Build and push image (only on push)
-        if: "github.event_name == 'push'"
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: ${{ env.IMAGE_NAME }}
-
-      - name: Deploy on remote server via SSH (only on push)
-        if: "github.event_name == 'push'"
-        uses: appleboy/ssh-action@v0.1.8
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT || '22' }}
-          timeout: 120
-          script: |
-            set -e
-            # Login on remote host using same precedence (secrets preferred)
-            if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-              echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin || true
-            elif [ -n "${{ vars.DOCKERHUB_USERNAME }}" ] && [ -n "${{ vars.DOCKERHUB_TOKEN }}" ]; then
-              echo "${{ vars.DOCKERHUB_TOKEN }}" | docker login -u "${{ vars.DOCKERHUB_USERNAME }}" --password-stdin || true
-            fi
-
-            docker pull ${{ env.IMAGE_NAME }} || true
-
-            if [ "$(docker ps -q -f name=myapp)" ]; then
-              docker stop myapp || true
-              docker rm myapp || true
-            fi
-
-            if docker images -q ${{ env.IMAGE_NAME }} > /dev/null 2>&1; then
-              docker rmi ${{ env.IMAGE_NAME }} || true
-            fi
-
-            docker run -d --restart unless-stopped -p 8082:8080 --name myapp ${{ env.IMAGE_NAME }}
+      - name: Run Docker Container
+        run: docker run -d -p 8082:8080 mvntmct
