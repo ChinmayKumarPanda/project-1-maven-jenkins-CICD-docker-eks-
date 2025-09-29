@@ -38,7 +38,7 @@ jobs:
           echo "IMAGE=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest" >> $GITHUB_ENV
           echo "IMAGE_SHA=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> $GITHUB_ENV
 
-      - name: Debug: show computed image names and repo
+      - name: show computed image names and repo
         run: |
           echo "Computed IMAGE: $IMAGE"
           echo "Computed IMAGE_SHA: $IMAGE_SHA"
