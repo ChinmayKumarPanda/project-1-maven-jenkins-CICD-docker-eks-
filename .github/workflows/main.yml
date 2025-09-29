@@ -30,16 +30,45 @@ jobs:
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
+        with:
+          mask-password: true
 
       - name: Set image name(s)
         run: |
           echo "IMAGE=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest" >> $GITHUB_ENV
           echo "IMAGE_SHA=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> $GITHUB_ENV
 
+      - name: Debug: show computed image names and repo
+        run: |
+          echo "Computed IMAGE: $IMAGE"
+          echo "Computed IMAGE_SHA: $IMAGE_SHA"
+          echo "ECR repository (secret): '${{ secrets.ECR_REPOSITORY }}'"
+          if [ -z "${{ secrets.ECR_REPOSITORY }}" ]; then
+            echo "::error::ECR_REPOSITORY secret is empty or missing. Create a repository secret named 'ECR_REPOSITORY' with value 'mvntmct'"
+            exit 1
+          fi
+
+      - name: Ensure ECR repository exists (create if missing)
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -e
+          echo "Checking for ECR repo '${{ secrets.ECR_REPOSITORY }}' in region ${AWS_REGION}..."
+          if aws ecr describe-repositories --repository-names "${{ secrets.ECR_REPOSITORY }}" --region "${AWS_REGION}" >/dev/null 2>&1; then
+            echo "Repository already exists."
+          else
+            echo "Repository not found — creating..."
+            aws ecr create-repository --repository-name "${{ secrets.ECR_REPOSITORY }}" --region "${AWS_REGION}"
+            echo "Repository created."
+          fi
+
       - name: Build Docker image
-        run: docker build -t $IMAGE_SHA -t $IMAGE .
+        run: |
+          set -e
+          docker build -t "$IMAGE_SHA" -t "$IMAGE" .
 
       - name: Push image to ECR
         run: |
-          docker push $IMAGE_SHA
-          docker push $IMAGE
+          set -e
+          docker push "$IMAGE_SHA"
+          docker push "$IMAGE"
