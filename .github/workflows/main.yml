@@ -1,39 +1,99 @@
-name: CI/CD to ECR
+name: Build and Deploy to EC2
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches:
+      - main
+  workflow_dispatch:
+
+# default envs (override via repo variables or workflow_dispatch inputs if needed)
+env:
+  IMAGE_NAME: myapp
+  IMAGE_TAG: latest
+  CONTAINER_NAME: myapp
+  HOST_PORT: 3000
+  CONTAINER_PORT: 3000
+  APP_DIR: /home/ec2-user/myapp
 
 jobs:
-  build-and-push:
+  deploy:
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-
     steps:
-      - name: Checkout code
+      - name: ✅ Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v3
+      - name: 🚀 Copy repo to EC2 (SCP)
+        uses: appleboy/scp-action@v0.1.7
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_SSH_USER }}          # e.g. ec2-user or ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}               # private key PEM contents
+          port: ${{ secrets.EC2_SSH_PORT }}             # optional, defaults to 22 in action if empty
+          source: "./"
+          target: "${{ env.APP_DIR }}"
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v1
+      - name: 🖥 Build & Run Docker on EC2 (via SSH)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT }}
+          script: |
+            set -euo pipefail
+            APP_DIR="${{ env.APP_DIR }}"
+            IMAGE="${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+            CONTAINER="${{ env.CONTAINER_NAME }}"
+            HOST_PORT=${{ env.HOST_PORT }}
+            CONTAINER_PORT=${{ env.CONTAINER_PORT }}
 
-      - name: Build, tag, and push image to ECR
-        run: |
-          IMAGE_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}
-          docker build -t $IMAGE_URI:latest -t $IMAGE_URI:${{ github.sha }} .
-          docker push $IMAGE_URI:latest
-          docker push $IMAGE_URI:${{ github.sha }}
+            echo "→ Changing to app dir: $APP_DIR"
+            cd "$APP_DIR"
+
+            echo "→ Building docker image: $IMAGE"
+            # ensure Dockerfile exists
+            if [ ! -f Dockerfile ]; then
+              echo "ERROR: Dockerfile not found in $APP_DIR" >&2
+              exit 1
+            fi
+
+            # Build image (use sudo if docker requires it)
+            if docker info >/dev/null 2>&1; then
+              docker build -t "$IMAGE" .
+            else
+              sudo docker build -t "$IMAGE" .
+            fi
+
+            echo "→ Stopping old container if exists..."
+            if docker ps -a --format '{{.Names}}' | grep -x "$CONTAINER" >/dev/null 2>&1; then
+              if docker ps --format '{{.Names}}' | grep -x "$CONTAINER" >/dev/null 2>&1; then
+                docker stop "$CONTAINER" || sudo docker stop "$CONTAINER" || true
+              fi
+              docker rm "$CONTAINER" || sudo docker rm "$CONTAINER" || true
+            fi
+
+            echo "→ Running new container..."
+            # remove old image mapping if exists (optional)
+            docker run -d --restart unless-stopped \
+              --name "$CONTAINER" \
+              -p "$HOST_PORT":"$CONTAINER_PORT" \
+              "$IMAGE" || sudo docker run -d --restart unless-stopped \
+              --name "$CONTAINER" \
+              -p "$HOST_PORT":"$CONTAINER_PORT" \
+              "$IMAGE"
+
+            echo "→ Cleanup dangling images (optional)"
+            docker image prune -f || sudo docker image prune -f || true
+
+            echo "✅ Deployment finished."
+
+      - name: ✅ Verify container is running
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT }}
+          script: |
+            echo "🔎 docker ps (filter by name)"
+            docker ps --filter "name=${{ env.CONTAINER_NAME }}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || sudo docker ps --filter "name=${{ env.CONTAINER_NAME }}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
